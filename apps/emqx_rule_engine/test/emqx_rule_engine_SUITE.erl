@@ -2117,7 +2117,7 @@ t_sqlparse_new_map(_Config) ->
                    }, Res00).
 
 t_sqlparse_payload_as(_Config) ->
-    %% https://github.com/emqx/emqx/issues/3866
+    %% https://hub.fastgit.org/fastdgiot/emqx/issues/3866
     Sql00 = "SELECT "
             " payload, map_get('engineWorkTime', payload.params, -1) as payload.params.engineWorkTime, "
             " map_get('hydOilTem', payload.params, -1) as payload.params.hydOilTem "
