@@ -3,7 +3,7 @@ name: Bug Report
 about: Create a report to help us improve
 title: ''
 labels: Support
-assignees: tigercl
+assignees: dawnwinterLiu
 
 ---
 
@@ -12,11 +12,11 @@ assignees: tigercl
 
 **Environment**:
 
-- EMQ X version (e.g. `emqx_ctl status`): 
+- dgiot version (e.g. `dgiot_ctl status`):
 - Hardware configuration (e.g. `lscpu`):
 - OS (e.g. `cat /etc/os-release`):
 - Kernel (e.g. `uname -a`):
-- Erlang/OTP version (in case you build emqx from source code): 
+- Erlang/OTP version (in case you build emqx from source code):
 - Others:
 
 **What happened and what you expected to happen**:

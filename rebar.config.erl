@@ -2,13 +2,18 @@
 
 -export([do/2]).
 
-do(_Dir, CONFIG) ->
-    {HasElixir, C1} = deps(CONFIG),
-    Config = dialyzer(C1),
-    maybe_dump(Config ++ [{overrides, overrides()}] ++ coveralls() ++ config(HasElixir)).
+do(Dir, CONFIG) ->
+    case iolist_to_binary(Dir) of
+        <<".">> ->
+            {HasElixir, C1} = deps(CONFIG),
+            Config = dialyzer(C1),
+            maybe_dump(Config ++ [{overrides, overrides()}] ++ coveralls() ++ config(HasElixir));
+        _ ->
+            CONFIG
+    end.
 
 bcrypt() ->
-    {bcrypt, {git, "https://github.com/emqx/erlang-bcrypt.git", {branch, "0.6.0"}}}.
+    {bcrypt, {git, "https://gitee.com/fastdgiot/erlang-bcrypt.git", {branch, "0.6.0"}}}.
 
 deps(Config) ->
     {deps, OldDeps} = lists:keyfind(deps, 1, Config),
@@ -46,6 +51,10 @@ overrides() ->
     [ {add, [ {extra_src_dirs, [{"etc", [{recursive,true}]}]}
             , {erl_opts, [{compile_info, [{emqx_vsn, get_vsn()}]}]}
             ]}
+
+    , {add, relx, [{erl_opts, [{d, 'RLX_LOG', rlx_log}]}]}
+    , {add, snabbkaffe,
+       [{erl_opts, common_compile_opts()}]}
     ] ++ community_plugin_overrides().
 
 community_plugin_overrides() ->
@@ -81,40 +90,40 @@ project_app_dirs() ->
     ["apps/*", alternative_lib_dir() ++ "/*", "."].
 
 plugins(HasElixir) ->
-    [ {relup_helper,{git,"https://hub.fastgit.org/fastdgiot/relup_helper", {tag, "2.0.0"}}}
-    , {er_coap_client, {git, "https://hub.fastgit.org/fastdgiot/er_coap_client", {tag, "v1.0"}}}
-      %% emqx main project does not require port-compiler
-      %% pin at root level for deterministic
-    , {pc, {git, "https://hub.fastgit.org/fastdgiot/port_compiler.git", {tag, "v1.11.1"}}}
-    | [ rebar_mix || HasElixir ]
+    [{relup_helper, {git, "https://gitee.com/fastdgiot/relup_helper", {tag, "2.1.0"}}}
+        %% emqx main project does not require port-compiler
+        %% pin at root level for deterministic
+        , {pc, {git, "https://gitee.com/fastdgiot/port_compiler.git", {tag, "v1.11.1"}}}
+    | [ {rebar_mix, "v0.4.0"} || HasElixir ]
     ]
     %% test plugins are concatenated to default profile plugins
     %% otherwise rebar3 test profile runs are super slow
     ++ test_plugins().
 
 test_plugins() ->
-    [ rebar3_proper,
-      {coveralls, {git, "https://hub.fastgit.org/fastdgiot/coveralls-erl", {branch, "fix-git-info"}}}
+    [rebar3_proper,
+        {coveralls, {git, "https://gitee.com/fastdgiot/coveralls-erl", {tag, "v2.2.0-emqx-1"}}}
     ].
 
 test_deps() ->
-    [ {bbmustache, "1.10.0"}
-    , {emqx_ct_helpers, {git, "https://hub.fastgit.org/fastdgiot/emqx-ct-helpers", {tag, "1.3.9"}}}
-    , meck
+    [{bbmustache, "1.10.0"}
+        , {emqx_ct_helpers, {git, "https://gitee.com/fastdgiot/emqx-ct-helpers", {tag, "1.3.11"}}}
+        , meck
     ].
 
 common_compile_opts() ->
-    [ debug_info % alwyas include debug_info
+    [debug_info % alwyas include debug_info
     , {compile_info, [{emqx_vsn, get_vsn()}]}
+        , {d, snk_kind, msg}
     ] ++
-    [{d, 'EMQX_ENTERPRISE'} || is_enterprise()] ++
-    [{d, 'EMQX_BENCHMARK'} || os:getenv("EMQX_BENCHMARK") =:= "1" ].
+        [{d, 'EMQX_ENTERPRISE'} || is_enterprise()] ++
+        [{d, 'EMQX_BENCHMARK'} || os:getenv("EMQX_BENCHMARK") =:= "1"].
 
 prod_compile_opts() ->
-    [ compressed
-    , deterministic
-    , warnings_as_errors
-    | common_compile_opts()
+    [compressed
+        , deterministic
+        , warnings_as_errors
+        | common_compile_opts()
     ].
 
 prod_overrides() ->
@@ -158,10 +167,23 @@ relx(Vsn, RelType, PkgType) ->
     , {vm_args,false}
     , {release, {emqx, Vsn}, relx_apps(RelType)}
     , {overlay, relx_overlay(RelType)}
-    , {overlay_vars, [ {built_on_arch, rebar_utils:get_arch()}
+    , {overlay_vars, [ {built_on_platform, built_on()}
                      , {emqx_description, emqx_description(RelType, IsEnterprise)}
                      | overlay_vars(RelType, PkgType, IsEnterprise)]}
     ].
+
+built_on() ->
+    On = rebar_utils:get_arch(),
+    case distro() of
+        false -> On;
+        Distro -> On ++ "-" ++ Distro
+    end.
+
+distro() ->
+    case os:type() of
+        {unix, _} -> string:strip(os:cmd("scripts/get-distro.sh"), both, $\n);
+        _ -> false
+    end.
 
 emqx_description(cloud, true) -> "EMQ X Enterprise";
 emqx_description(cloud, false) -> "EMQ X Broker";
@@ -194,8 +216,7 @@ overlay_vars_pkg(bin) ->
     , {platform_etc_dir, "etc"}
     , {platform_lib_dir, "lib"}
     , {platform_log_dir, "log"}
-    , {platform_plugins_dir,  "plugins"}
-    , {runner_root_dir, "$(cd $(dirname $(readlink $0 || echo $0))/..; pwd -P)"}
+    , {platform_plugins_dir,  "etc/plugins"}
     , {runner_bin_dir, "$RUNNER_ROOT_DIR/bin"}
     , {runner_etc_dir, "$RUNNER_ROOT_DIR/etc"}
     , {runner_lib_dir, "$RUNNER_ROOT_DIR/lib"}
@@ -210,7 +231,6 @@ overlay_vars_pkg(pkg) ->
     , {platform_lib_dir, ""}
     , {platform_log_dir, "/var/log/emqx"}
     , {platform_plugins_dir, "/var/lib/emqx/plugins"}
-    , {runner_root_dir, "/usr/lib/emqx"}
     , {runner_bin_dir, "/usr/bin"}
     , {runner_etc_dir, "/etc/emqx"}
     , {runner_lib_dir, "$RUNNER_ROOT_DIR/lib"}
@@ -220,23 +240,25 @@ overlay_vars_pkg(pkg) ->
     ].
 
 relx_apps(ReleaseType) ->
-    [ kernel
-    , sasl
-    , crypto
-    , public_key
-    , asn1
-    , syntax_tools
-    , ssl
-    , os_mon
-    , inets
-    , compiler
-    , runtime_tools
-    , cuttlefish
-    , emqx
-    , {mnesia, load}
-    , {ekka, load}
-    , {emqx_plugin_libs, load}
-    , observer_cli
+    relx_otp_apps() ++
+    [   redbug
+        , cuttlefish
+        , jsx
+        , jesse
+        , jwerl
+        , odbc
+        , erlydtl
+        , erlport
+        , ecpool
+        , grpc
+        , gpb
+        , poolboy
+        , ibrowse
+        , gen_smtp
+        , emqx
+        , {ekka, load}
+        , {emqx_plugin_libs, load}
+        , observer_cli
     ]
     ++ [emqx_modules || not is_enterprise()]
     ++ [emqx_license || is_enterprise()]
@@ -244,10 +266,14 @@ relx_apps(ReleaseType) ->
     ++ relx_apps_per_rel(ReleaseType)
     ++ [{N, load} || N <- relx_plugin_apps(ReleaseType)].
 
+relx_otp_apps() ->
+    {ok, [Apps]} = file:consult("scripts/rel_otp_apps.eterm"),
+    true = is_list(Apps),
+    Apps.
+
 relx_apps_per_rel(cloud) ->
-    [ luerl
-    , xmerl
-    | [{observer, load} || is_app(observer)]
+    [
+      {observer, load} || is_app(observer)
     ];
 relx_apps_per_rel(edge) ->
     [].
@@ -264,14 +290,10 @@ relx_plugin_apps(ReleaseType) ->
     , emqx_management
     , emqx_dashboard
     , emqx_bridge_mqtt
-    , emqx_sn
-    , emqx_coap
-    , emqx_stomp
-    , emqx_web_hook
     , emqx_recon
     , emqx_rule_engine
     , emqx_sasl
-    , dgiot
+    , emqx_auth_mnesia
     ]
     ++ [emqx_telemetry || not is_enterprise()]
     ++ relx_plugin_apps_per_rel(ReleaseType)
@@ -279,12 +301,11 @@ relx_plugin_apps(ReleaseType) ->
     ++ relx_plugin_apps_extra().
 
 relx_plugin_apps_per_rel(cloud) ->
-    [ emqx_lwm2m
-    , emqx_lua_hook
-    , emqx_exhook
-    , emqx_exproto
-    , emqx_prometheus
-    , emqx_psk_file
+    [
+        emqx_exhook
+        , emqx_prometheus
+        , emqx_psk_file
+        , emqx_auth_mnesia
     ];
 relx_plugin_apps_per_rel(edge) ->
     [].
@@ -305,11 +326,13 @@ relx_overlay(ReleaseType) ->
     , {mkdir, "data/configs"}
     , {mkdir, "data/patches"}
     , {mkdir, "data/scripts"}
+    , {mkdir, "data/backup"}
     , {template, "data/loaded_plugins.tmpl", "data/loaded_plugins"}
     , {template, "data/loaded_modules.tmpl", "data/loaded_modules"}
     , {template, "data/emqx_vars", "releases/emqx_vars"}
     , {copy, "bin/emqx", "bin/emqx"}
     , {copy, "bin/emqx_ctl", "bin/emqx_ctl"}
+    , {copy, "bin/emqx_cluster_rescue", "bin/emqx_cluster_rescue"}
     , {copy, "bin/node_dump", "bin/node_dump"}
     , {copy, "bin/install_upgrade.escript", "bin/install_upgrade.escript"}
     , {copy, "bin/emqx", "bin/emqx-{{release_version}}"} %% for relup
@@ -344,8 +367,8 @@ etc_overlay(ReleaseType) ->
     ++ extra_overlay(ReleaseType).
 
 extra_overlay(cloud) ->
-    [ {copy,"{{base_dir}}/lib/emqx_lwm2m/lwm2m_xml","etc/"}
-    , {copy, "{{base_dir}}/lib/emqx_psk_file/etc/psk.txt", "etc/psk.txt"}
+    [
+     {copy, "{{base_dir}}/lib/emqx_psk_file/etc/psk.txt", "etc/psk.txt"}
     ];
 extra_overlay(edge) ->
     [].

@@ -1,5 +1,5 @@
 %%-------------------------------------------------------------------
-%% Copyright (c) 2017-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2017-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -22,6 +22,10 @@
 -include("emqx.hrl").
 -include("logger.hrl").
 -include("types.hrl").
+
+-include_lib("stdlib/include/qlc.hrl").
+-include_lib("stdlib/include/ms_transform.hrl").
+-include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
 -logger_header("[CM]").
 
@@ -59,7 +63,9 @@
         , lookup_channels/2
         ]).
 
--export([all_channels/0]).
+-export([all_channels/0,
+         channel_with_session_table/1,
+         live_connection_table/1]).
 
 %% gen_server callbacks
 -export([ init/1
@@ -71,7 +77,12 @@
         ]).
 
 %% Internal export
--export([stats_fun/0]).
+-export([ stats_fun/0
+        , clean_down/1
+        , mark_channel_connected/1
+        , mark_channel_disconnected/1
+        , get_connected_client_count/0
+        ]).
 
 -type(chan_pid() :: pid()).
 
@@ -79,11 +90,13 @@
 -define(CHAN_TAB, emqx_channel).
 -define(CHAN_CONN_TAB, emqx_channel_conn).
 -define(CHAN_INFO_TAB, emqx_channel_info).
+-define(CHAN_LIVE_TAB, emqx_channel_live).
 
 -define(CHAN_STATS,
         [{?CHAN_TAB, 'channels.count', 'channels.max'},
          {?CHAN_TAB, 'sessions.count', 'sessions.max'},
-         {?CHAN_CONN_TAB, 'connections.count', 'connections.max'}
+         {?CHAN_CONN_TAB, 'connections.count', 'connections.max'},
+         {?CHAN_LIVE_TAB, 'live_connections.count', 'live_connections.max'}
         ]).
 
 %% Batch drain
@@ -92,7 +105,9 @@
 %% Server name
 -define(CM, ?MODULE).
 
--define(T_TAKEOVER, 15000).
+-define(T_KICK, 5_000).
+-define(T_GET_INFO, 5_000).
+-define(T_TAKEOVER, 15_000).
 
 %% @doc Start the channel manager.
 -spec(start_link() -> startlink_ret()).
@@ -110,6 +125,7 @@ start_link() ->
 insert_channel_info(ClientId, Info, Stats) ->
     Chan = {ClientId, self()},
     true = ets:insert(?CHAN_INFO_TAB, {Chan, Info, Stats}),
+    ?tp(debug, insert_channel_info, #{client_id => ClientId}),
     ok.
 
 %% @private
@@ -125,6 +141,7 @@ register_channel(ClientId, ChanPid, #{conn_mod := ConnMod}) when is_pid(ChanPid)
     true = ets:insert(?CHAN_TAB, Chan),
     true = ets:insert(?CHAN_CONN_TAB, {Chan, ConnMod}),
     ok = emqx_cm_registry:register_channel(Chan),
+    mark_channel_connected(ChanPid),
     cast({registered, Chan}).
 
 %% @doc Unregister a channel.
@@ -145,8 +162,11 @@ connection_closed(ClientId) ->
     connection_closed(ClientId, self()).
 
 -spec(connection_closed(emqx_types:clientid(), chan_pid()) -> true).
-connection_closed(ClientId, ChanPid) ->
-    ets:delete_object(?CHAN_CONN_TAB, {ClientId, ChanPid}).
+connection_closed(_ClientId, _ChanPid) ->
+    %% We can't clean CHAN_CONN_TAB because records for dead connections
+    %% are required for `get_chann_conn_mod/1` function, and `get_chann_conn_mod/1`
+    %% is used for takeover.
+    true.
 
 %% @doc Get info of a channel.
 -spec(get_chan_info(emqx_types:clientid()) -> maybe(emqx_types:infos())).
@@ -162,7 +182,7 @@ get_chan_info(ClientId, ChanPid) when node(ChanPid) == node() ->
         error:badarg -> undefined
     end;
 get_chan_info(ClientId, ChanPid) ->
-    rpc_call(node(ChanPid), get_chan_info, [ClientId, ChanPid]).
+    rpc_call(node(ChanPid), get_chan_info, [ClientId, ChanPid], ?T_GET_INFO).
 
 %% @doc Update infos of the channel.
 -spec(set_chan_info(emqx_types:clientid(), emqx_types:attrs()) -> boolean()).
@@ -187,7 +207,7 @@ get_chan_stats(ClientId, ChanPid) when node(ChanPid) == node() ->
         error:badarg -> undefined
     end;
 get_chan_stats(ClientId, ChanPid) ->
-    rpc_call(node(ChanPid), get_chan_stats, [ClientId, ChanPid]).
+    rpc_call(node(ChanPid), get_chan_stats, [ClientId, ChanPid], ?T_GET_INFO).
 
 %% @doc Set channel's stats.
 -spec(set_chan_stats(emqx_types:clientid(), emqx_types:stats()) -> boolean()).
@@ -222,18 +242,26 @@ open_session(true, ClientInfo = #{clientid := ClientId}, ConnInfo) ->
 open_session(false, ClientInfo = #{clientid := ClientId}, ConnInfo) ->
     Self = self(),
     ResumeStart = fun(_) ->
-                      case takeover_session(ClientId) of
-                          {ok, ConnMod, ChanPid, Session} ->
-                              ok = emqx_session:resume(ClientInfo, Session),
-                              Pendings = ConnMod:call(ChanPid, {takeover, 'end'}, ?T_TAKEOVER),
-                              register_channel(ClientId, Self, ConnInfo),
-                              {ok, #{session  => Session,
-                                     present  => true,
-                                     pendings => Pendings}};
-                          {error, not_found} ->
+                      CreateSess =
+                          fun() ->
                               Session = create_session(ClientInfo, ConnInfo),
                               register_channel(ClientId, Self, ConnInfo),
                               {ok, #{session => Session, present => false}}
+                          end,
+                      case takeover_session(ClientId) of
+                          {ok, ConnMod, ChanPid, Session0} ->
+                              Session = emqx_session:upgrade(ClientInfo, Session0),
+                              ok = emqx_session:resume(ClientInfo, Session),
+                              case request_stepdown({takeover, 'end'}, ConnMod, ChanPid) of
+                                  {ok, Pendings} ->
+                                      register_channel(ClientId, Self, ConnInfo),
+                                      {ok, #{session  => Session,
+                                             present  => true,
+                                             pendings => Pendings}};
+                                  {error, _} ->
+                                      CreateSess()
+                              end;
+                          {error, _Reason} -> CreateSess()
                       end
                   end,
     emqx_cm_locker:trans(ClientId, ResumeStart).
@@ -255,7 +283,7 @@ takeover_session(ClientId) ->
             takeover_session(ClientId, ChanPid);
         ChanPids ->
             [ChanPid|StalePids] = lists:reverse(ChanPids),
-            ?LOG(error, "More than one channel found: ~p", [ChanPids]),
+            ?LOG(error, "more_than_one_channel_found: ~p", [ChanPids]),
             lists:foreach(fun(StalePid) ->
                                   catch discard_session(ClientId, StalePid)
                           end, StalePids),
@@ -267,66 +295,136 @@ takeover_session(ClientId, ChanPid) when node(ChanPid) == node() ->
         undefined ->
             {error, not_found};
         ConnMod when is_atom(ConnMod) ->
-            Session = ConnMod:call(ChanPid, {takeover, 'begin'}, ?T_TAKEOVER),
-            {ok, ConnMod, ChanPid, Session}
+            case request_stepdown({takeover, 'begin'}, ConnMod, ChanPid) of
+                {ok, Session} ->
+                    {ok, ConnMod, ChanPid, emqx_session:downgrade(Session)};
+                {error, Reason} ->
+                    {error, Reason}
+            end
     end;
-
 takeover_session(ClientId, ChanPid) ->
-    rpc_call(node(ChanPid), takeover_session, [ClientId, ChanPid]).
+    rpc_call(node(ChanPid), takeover_session, [ClientId, ChanPid], ?T_TAKEOVER).
 
 %% @doc Discard all the sessions identified by the ClientId.
 -spec(discard_session(emqx_types:clientid()) -> ok).
 discard_session(ClientId) when is_binary(ClientId) ->
     case lookup_channels(ClientId) of
         [] -> ok;
-        ChanPids ->
-            lists:foreach(
-              fun(ChanPid) ->
-                      try
-                          discard_session(ClientId, ChanPid)
-                      catch
-                          _:{noproc,_}:_Stk -> ok;
-                          _:{{shutdown,_},_}:_Stk -> ok;
-                          _:Error:_Stk ->
-                              ?LOG(error, "Failed to discard ~0p: ~0p", [ChanPid, Error])
-                      end
-              end, ChanPids)
+        ChanPids -> lists:foreach(fun(Pid) -> discard_session(ClientId, Pid) end, ChanPids)
     end.
 
-discard_session(ClientId, ChanPid) when node(ChanPid) == node() ->
-    case get_chann_conn_mod(ClientId, ChanPid) of
-        undefined -> ok;
-        ConnMod when is_atom(ConnMod) ->
-            ConnMod:call(ChanPid, discard, ?T_TAKEOVER)
-    end;
+%% @private call a local stale session to execute an Action.
+%% If failed to response (e.g. timeout) force a kill.
+%% Keeping the stale pid around, or returning error or raise an exception
+%% benefits nobody.
+-spec request_stepdown(Action, module(), pid())
+    -> ok
+     | {ok, emqx_session:session() | list(emqx_type:deliver())}
+     | {error, term()}
+  when Action :: kick | discard | {takeover, 'begin'} | {takeover, 'end'}.
+request_stepdown(Action, ConnMod, Pid) ->
+    Timeout =
+        case Action == kick orelse Action == discard of
+            true -> ?T_KICK;
+            _ -> ?T_TAKEOVER
+        end,
+    Return =
+        %% this is essentailly a gen_server:call implemented in emqx_connection
+        %% and emqx_ws_connection.
+        %% the handle_call is implemented in emqx_channel
+        try apply(ConnMod, call, [Pid, Action, Timeout]) of
+            ok -> ok;
+            Reply -> {ok, Reply}
+        catch
+            _ : noproc -> % emqx_ws_connection: call
+                ok = ?tp(debug, "session_already_gone", #{pid => Pid, action => Action}),
+                {error, noproc};
+            _ : {noproc, _} -> % emqx_connection: gen_server:call
+                ok = ?tp(debug, "session_already_gone", #{pid => Pid, action => Action}),
+                {error, noproc};
+            _ : Reason = {shutdown, _} ->
+                ok = ?tp(debug, "session_already_shutdown", #{pid => Pid, action => Action}),
+                {error, Reason};
+            _ : Reason = {{shutdown, _}, _} ->
+                ok = ?tp(debug, "session_already_shutdown", #{pid => Pid, action => Action}),
+                {error, Reason};
+            _ : {timeout, {gen_server, call, _}} ->
+                ?tp(warning, "session_stepdown_request_timeout",
+                    #{pid => Pid,
+                      action => Action,
+                      stale_channel => stale_channel_info(Pid)
+                     }),
+                ok = force_kill(Pid),
+                {error, timeout};
+            _ : Error : St ->
+                ?tp(error, "session_stepdown_request_exception",
+                    #{pid => Pid,
+                      action => Action,
+                      reason => Error,
+                      stacktrace => St,
+                      stale_channel => stale_channel_info(Pid)
+                     }),
+                ok = force_kill(Pid),
+                {error, Error}
+        end,
+    case Action == kick orelse Action == discard of
+        true -> ok;
+        _ -> Return
+    end.
+
+force_kill(Pid) ->
+    exit(Pid, kill),
+    ok.
+
+stale_channel_info(Pid) ->
+    process_info(Pid, [status, message_queue_len, current_stacktrace]).
 
 discard_session(ClientId, ChanPid) ->
-    rpc_call(node(ChanPid), discard_session, [ClientId, ChanPid]).
+    kick_session(discard, ClientId, ChanPid).
+
+kick_session(ClientId, ChanPid) ->
+    kick_session(kick, ClientId, ChanPid).
+
+%% @private This function is shared for session 'kick' and 'discard' (as the first arg Action).
+kick_session(Action, ClientId, ChanPid) when node(ChanPid) == node() ->
+    case get_chann_conn_mod(ClientId, ChanPid) of
+        undefined ->
+            %% already deregistered
+            ok;
+        ConnMod when is_atom(ConnMod) ->
+            ok = request_stepdown(Action, ConnMod, ChanPid)
+    end;
+kick_session(Action, ClientId, ChanPid) ->
+    %% call remote node on the old APIs because we do not know if they have upgraded
+    %% to have kick_session/3
+    Function = case Action of
+                   discard -> discard_session;
+                   kick -> kick_session
+               end,
+    try
+        rpc_call(node(ChanPid), Function, [ClientId, ChanPid], ?T_KICK)
+    catch
+        Error : Reason ->
+            %% This should mostly be RPC failures.
+            %% However, if the node is still running the old version
+            %% code (prior to emqx app 4.3.10) some of the RPC handler
+            %% exceptions may get propagated to a new version node
+            ?LOG(error, "failed_to_kick_session_on_remote_node ~p: ~p ~p ~p",
+                 [node(ChanPid), Action, Error, Reason])
+    end.
 
 kick_session(ClientId) ->
     case lookup_channels(ClientId) of
-        [] -> {error, not_found};
-        [ChanPid] ->
-            kick_session(ClientId, ChanPid);
+        [] ->
+            ?LOG(warning, "kicked_an_unknown_session ~ts", [ClientId]),
+            ok;
         ChanPids ->
-            [ChanPid|StalePids] = lists:reverse(ChanPids),
-            ?LOG(error, "More than one channel found: ~p", [ChanPids]),
-            lists:foreach(fun(StalePid) ->
-                                  catch discard_session(ClientId, StalePid)
-                          end, StalePids),
-            kick_session(ClientId, ChanPid)
+            case length(ChanPids) > 1 of
+                true -> ?LOG(info, "more_than_one_channel_found: ~p", [ChanPids]);
+                false -> ok
+            end,
+            lists:foreach(fun(Pid) -> kick_session(ClientId, Pid) end, ChanPids)
     end.
-
-kick_session(ClientId, ChanPid) when node(ChanPid) == node() ->
-    case get_chan_info(ClientId, ChanPid) of
-        #{conninfo := #{conn_mod := ConnMod}} ->
-            ConnMod:call(ChanPid, kick, ?T_TAKEOVER);
-        undefined ->
-            {error, not_found}
-    end;
-
-kick_session(ClientId, ChanPid) ->
-    rpc_call(node(ChanPid), kick_session, [ClientId, ChanPid]).
 
 %% @doc Is clean start?
 % is_clean_start(#{clean_start := false}) -> false;
@@ -343,6 +441,41 @@ with_channel(ClientId, Fun) ->
 all_channels() ->
     Pat = [{{'_', '$1'}, [], ['$1']}],
     ets:select(?CHAN_TAB, Pat).
+
+%% @doc Get clientinfo for all clients with sessions
+channel_with_session_table(ConnModules) ->
+    Ms = ets:fun2ms(
+           fun({{ClientId, _ChanPid},
+                Info,
+                _Stats}) ->
+                   {ClientId, Info}
+           end),
+    Table = ets:table(?CHAN_INFO_TAB, [{traverse, {select, Ms}}]),
+    ConnModuleMap = maps:from_list([{Mod, true} || Mod <- ConnModules]),
+    qlc:q([ {ClientId, ConnState, ConnInfo, ClientInfo}
+            || {ClientId,
+                #{conn_state := ConnState,
+                  clientinfo := ClientInfo,
+                  conninfo := #{clean_start := false, conn_mod := ConnModule} = ConnInfo}}
+               <- Table,
+               maps:is_key(ConnModule, ConnModuleMap)
+          ]).
+
+%% @doc Get all local connection query handle
+live_connection_table(ConnModules) ->
+    Ms = lists:map(fun live_connection_ms/1, ConnModules),
+    Table = ets:table(?CHAN_CONN_TAB, [{traverse, {select, Ms}}]),
+    qlc:q([{ClientId, ChanPid} || {ClientId, ChanPid} <- Table, is_channel_connected(ClientId, ChanPid)]).
+
+live_connection_ms(ConnModule) ->
+    {{{'$1','$2'},ConnModule},[],[{{'$1','$2'}}]}.
+
+is_channel_connected(ClientId, ChanPid) when node(ChanPid) =:= node() ->
+    case get_chan_info(ClientId, ChanPid) of
+        #{conn_state := disconnected} -> false;
+        _ -> true
+    end;
+is_channel_connected(_ClientId, _ChanPid) -> false.
 
 %% @doc Lookup channels.
 -spec(lookup_channels(emqx_types:clientid()) -> list(chan_pid())).
@@ -363,10 +496,16 @@ lookup_channels(local, ClientId) ->
     [ChanPid || {_, ChanPid} <- ets:lookup(?CHAN_TAB, ClientId)].
 
 %% @private
-rpc_call(Node, Fun, Args) ->
-    case rpc:call(Node, ?MODULE, Fun, Args) of
-        {badrpc, Reason} -> error(Reason);
-        Res -> Res
+rpc_call(Node, Fun, Args, Timeout) ->
+    case rpc:call(Node, ?MODULE, Fun, Args, 2 * Timeout) of
+        {badrpc, Reason} ->
+            %% since eqmx app 4.3.10, the 'kick' and 'discard' calls hanndler
+            %% should catch all exceptions and always return 'ok'.
+            %% This leaves 'badrpc' only possible when there is problem
+            %% calling the remote node.
+            error({badrpc, Reason});
+        Res ->
+            Res
     end.
 
 %% @private
@@ -381,8 +520,10 @@ init([]) ->
     ok = emqx_tables:new(?CHAN_TAB, [bag, {read_concurrency, true}|TabOpts]),
     ok = emqx_tables:new(?CHAN_CONN_TAB, [bag | TabOpts]),
     ok = emqx_tables:new(?CHAN_INFO_TAB, [set, compressed | TabOpts]),
+    ok = emqx_tables:new(?CHAN_LIVE_TAB, [set, {write_concurrency, true} | TabOpts]),
     ok = emqx_stats:update_interval(chan_stats, fun ?MODULE:stats_fun/0),
-    {ok, #{chan_pmon => emqx_pmon:new()}}.
+    State = #{chan_pmon => emqx_pmon:new()},
+    {ok, State}.
 
 handle_call(Req, _From, State) ->
     ?LOG(error, "Unexpected call: ~p", [Req]),
@@ -391,17 +532,17 @@ handle_call(Req, _From, State) ->
 handle_cast({registered, {ClientId, ChanPid}}, State = #{chan_pmon := PMon}) ->
     PMon1 = emqx_pmon:monitor(ChanPid, ClientId, PMon),
     {noreply, State#{chan_pmon := PMon1}};
-
 handle_cast(Msg, State) ->
     ?LOG(error, "Unexpected cast: ~p", [Msg]),
     {noreply, State}.
 
 handle_info({'DOWN', _MRef, process, Pid, _Reason}, State = #{chan_pmon := PMon}) ->
+    ?tp(emqx_cm_process_down, #{pid => Pid, reason => _Reason}),
     ChanPids = [Pid | emqx_misc:drain_down(?BATCH_SIZE)],
     {Items, PMon1} = emqx_pmon:erase_all(ChanPids, PMon),
-    ok = emqx_pool:async_submit(fun lists:foreach/2, [fun clean_down/1, Items]),
+    lists:foreach(fun mark_channel_disconnected/1, ChanPids),
+    ok = emqx_pool:async_submit(fun lists:foreach/2, [fun ?MODULE:clean_down/1, Items]),
     {noreply, State#{chan_pmon := PMon1}};
-
 handle_info(Info, State) ->
     ?LOG(error, "Unexpected info: ~p", [Info]),
     {noreply, State}.
@@ -435,5 +576,20 @@ get_chann_conn_mod(ClientId, ChanPid) when node(ChanPid) == node() ->
         error:badarg -> undefined
     end;
 get_chann_conn_mod(ClientId, ChanPid) ->
-    rpc_call(node(ChanPid), get_chann_conn_mod, [ClientId, ChanPid]).
+    rpc_call(node(ChanPid), get_chann_conn_mod, [ClientId, ChanPid], ?T_GET_INFO).
 
+mark_channel_connected(ChanPid) ->
+    ?tp(emqx_cm_connected_client_count_inc, #{}),
+    ets:insert_new(?CHAN_LIVE_TAB, {ChanPid, true}),
+    ok.
+
+mark_channel_disconnected(ChanPid) ->
+    ?tp(emqx_cm_connected_client_count_dec, #{}),
+    ets:delete(?CHAN_LIVE_TAB, ChanPid),
+    ok.
+
+get_connected_client_count() ->
+    case ets:info(?CHAN_LIVE_TAB, size) of
+        undefined -> 0;
+        Size -> Size
+    end.

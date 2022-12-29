@@ -1,69 +1,205 @@
-# 数蛙工业互联网持续集成平台
+#  DGIOT Lightweight industrial IoT open source platform
 
-## 前言
-   
-   数蛙团队2016年之前，在互联网和移动互联网爬坑多年，2016年开始进入物联网爬坑，希望通过这个开源平台把多年爬坑经验共享出来，让多学科交叉的工业互联网项目变得更简单。
-   
-   - 让丰富工程人员可以通过视窗交互可以完成需求较简单的工业互联网项目
-   
-   - 让广大的初级前端工程师通过serverless的方式可以承接需求较复杂的工业互联网项目
-   
-   - 让Python、Java、Go、C初级后台工程师通过web编程开发通道来承接复杂的工业互联网项目
-   
-   工业互联网落地过程是IT和OT持续融合的过程，也是技术领域和业务领域持续融合的过程。会者不难，难着不会，要把工业互联网项目变得简单一些，主要还是需要依赖于各个领域的专家围绕业务场景进行信息流的无缝路由，构建一张多学科融合的知识路由表。
-   
-   基于数蛙工业物联网持续集成平台可以让学者多学科交叉的知识路由表中发布学术论文，技者在实战中练就快速消化项目的本领和收入回报，商者围绕实际项目找到盈利商机。
-  
-# 愿景
 
-  数蛙团队希望通过数蛙工业互联网持续集成平台达成下面一些愿景：
-  
-  + 通过工程人员、前端工程师、初级后台工程师在不超过1个月的实际完成中小型的工业互联网项目
-  
-  + 通过代码开源、软件免费、文档共享、技术认证、产品认证、运维托管等多种方式保证高质量的交付
-  
-  + 技术领域专家不断持续集成业界优秀技术框架、业务领域专家不断持续优化业务模型和流程、构建多学科交叉的开放平台
-  
-# 产品
-  
-   + 边缘侧系列产品
-   
-   + 云端系统产品
-   
-# 构建
+[![GitHub Release](https://img.shields.io/github/release/dgiot/dgiot?color=brightgreen)](https://github.com/dgiot/dgiot/releases)
+[![Build Status](https://travis-ci.org/dgiot/dgiot.svg)](https://travis-ci.org/dgiot/dgiot)
+[![Docker Pulls](https://img.shields.io/docker/pulls/dgiot/dgiot)](https://hub.docker.com/r/dgiot/dgiot)
+[![Community](https://img.shields.io/badge/Community-DGIOT-yellow)](https://www.dgiotcloud.cn/)
+[![QQ群346566935](https://img.shields.io/badge/QQ群-346566935-brightgreen)](https://jq.qq.com/?_wv=1027&k=LipWZvDe)
+[![star](https://gitee.com/dgiiot/dgiot/badge/star.svg?theme=gvp)](https://gitee.com/dgiiot/dgiot/stargazers)
 
-+   Linux/Unix/Mac构建
-```
-git clone https://hub.fastgit.org/dgiot/dgiot_server.git
-make
-``
-+ windows构建
+
+[English](./README.md) | [简体中文](./README-CN.md) | [日本語](./README-JP.md) | [русский](./README-RU.md)
+
+
+[github](https://github.com/dgiot?from=git)|[gitee](https://gitee.com/dgiiot)|[Official website](https://www.dgiotcloud.cn/)|[Blog](https://www.dgiotcloud.cn/?cat=19)|[Experience](https://prod.dgiotcloud.cn)|
+
+*DGIOT*  is the first lightweight open source industrial IoT continuous integration platform in China
+
+Before 2016, the Shuwa team had been crawling on the Internet and the mobile Internet for many years. In 2016, it began to enter the Internet of Things crawling. It hopes to share many years of crawling experience through this open source platform and make multidisciplinary industrial Internet projects easier.
+   + Let rich engineers to complete industrial Internet projects with simpler requirements through window interaction
+   + Let the majority of junior front-end engineers to undertake industrial Internet projects with more complex requirements through the serverless method
+   + Let Python, Java, Go, C junior background engineers undertake complex industrial Internet projects through web programming development channels
+
+# Business architecture
+  ![](http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/msys64/dgiot_arch_msg.jpg)
+# Core features
++ The front and back ends are completely open source, no-charge commercial version
++ Support privatization one-click deployment, quickly own your own lightweight IoT platform
++ Carrying over tens of millions of long connections, carrier-class stability
++ Object model-rule engine-data channel-configuration page full-process visualization low-code development
++ Multi-industry industrial protocol compatibility
+# Building
+
+ Bulid *DGIOT* Need Erlang/OTP R21+, Windows download  [msys64.zip](https://dgiotdev-1308220533.cos.ap-nanjing.myqcloud.com/msys64.zip)    ,After downloading, unzip it to the root directory of Disk D, and operate strictly in accordance with the following figure：
+![dgiotdevtools.png](http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/shuwa_tech/zh/dgiotdevtools.png)
+
+ +  Download source code abroad
+  ```bash
+     git clone -b master https://github.com/dgiot/dgiot-dashboard.git
+     git clone https://github.com/dgiot/dgiot.git
+   ```
+
+ +  China download source code
+   ```bash
+     git clone -b master https://gitee.com/dgiiot/dgiot-dashboard.git
+     git clone https://gitee.com/dgiiot/dgiot.git
+   ```
+
+ +  One touch start command Linux/Unix/Mac/windows
+ ```bash
+ make run
  ```
- 下载msys64
- 
-git clone https://hub.fastgit.org/dgiot/dgiot_server.git
-make
-``
++ Make Debug
+ ```
+  make DIAGNOSTIC=1
+ ```
+ *DGIOT* start, you can use a browser to visit  http://localhost to view Dashboard.。
 
-## 预览地址
+- For a complete list of new features, see [DGIOT Release Notes](https://github.com/dgiot/dgiot/releases)。
+- For more information, please visit [DGIOT Website](https://www.dgiotcloud.cn/)。
 
-[腾讯云预览地址](https://dgiotdashboard-8gb17b3673ff6cdd-1253666439.ap-shanghai.app.tcloudbase.com?ftom=git)
+## Installation and deployment
 
-## 扫码预览
+ + **centos 7.6**
 
-![dgiot_dashboard.png](http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/wechat/dgiot_dashboard.png)
 
-## 环境要求
+```
+wget -q https://gitee.com/dgiiot/dgiot/raw/master/dgiot_install.sh  && sh dgiot_install.sh
+```
 
-- node > 14.5
+## Community
 
-### 关于我们
+### FAQ
 
-| 联系方式       | 地址                                                                                      |
+Visit [DGIOT FAQ](https://www.dgiotcloud.cn/?cat=19) to get help on frequently asked questions
+
+### FAQ
+
+[GitHub Discussions](https://github.com/dgiot/dgiot_server/discussions)
+[DGIOT Chinese Q&A Community](https://www.dgiotcloud.cn/?page_id=12)
+
+### Involved in the design
+
+If you have suggestions for improvements to DGIOT, you can submit PR and ISSUE to [EIP](https://github.com/dgiot/eip)
+
+### Plug-in development
+
+If you want to integrate or develop your own plug-in, refer to [lib-extra/README.md](./lib-extra/README.md)
+
+You are welcome to submit any bugs, issues and feature requests to [dgiot/dgiot](https://github.com/dgiot/dgiot/issues)。
+
+### About Us
+| contact details       | address                                                                                      |
 | -------------- | ----------------------------------------------------------------------------------------- |
 | github         | [https://github.com/dgiot](https://github.com/dgiot?from=git)                             |
 | gitee          | [https://gitee.com/dgiot](https://gitee.com/dgiiot?from=git)                              |
-| 官网           | [https://www.iotn2n.com](https://www.iotn2n.com?from=git)                                 |
-| 博客           | [https://tech.iotn2n.com](https://tech.iotn2n.com?from=git)                               |
-| 物联网接入平台 | [https://dgiot.iotn2n.com](https://dgiot.iotn2n.com?from=git)                             |
-| 公众号         | ![qrcode.png](http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/wechat/qrcode.png) |
+| Official website           | [https://www.dgiotcloud.cn](https://www.dgiotcloud.cn)                                 |
+| Blog           | [https://www.dgiotcloud.cn/?cat=19](https://www.dgiotcloud.cn/?cat=19)                               |
+| IoT access platform | [https://prod.dgiotcloud.cn](https://prod.dgiotcloud.cn)                             |
+| The public         | ![qrcode.png](http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/wechat/qrcode.png) |
+|We chat group|<img src="https://dgiot-web-1306242080.cos.ap-nanjing.myqcloud.com/wechat.png" width = "30%" />|
+| QQ group             | 346566935   |
+
+## 平台介绍
+<table >
+    <tr style={{border : 'none'}}>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1yP411V7k7?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E5%B9%B3%E5%8F%B0%E4%BB%8B%E7%BB%8D/1.jpg" /></a></td>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1GP4y1L7Sv?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E5%B9%B3%E5%8F%B0%E4%BB%8B%E7%BB%8D/2.jpg" /></a></td>
+    </tr>
+    <tr class="td1" valign="top" style={{border : 'none',background : '#fff'}}>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1yP411V7k7?spm_id_from=333.999.0.0" title="DG-IoT平台简介及业务架构">DG-IoT平台简介及业务架构</a></td>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1GP4y1L7Sv?spm_id_from=333.999.0.0" title="DG-IoT平台业务架构详细讲解">DG-IoT平台业务架构详细讲解</a></td>
+     </tr>
+</table>
+
+## 服务器部署教程
+<table style={{border : 'none'}}>
+    <tr style={{border : 'none'}}>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1fS4y1z7Gp?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E6%9C%8D%E5%8A%A1%E5%99%A8%E9%83%A8%E7%BD%B2%E6%95%99%E7%A8%8B/1.jpg" /></a></td>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV18b4y1x77E?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E6%9C%8D%E5%8A%A1%E5%99%A8%E9%83%A8%E7%BD%B2%E6%95%99%E7%A8%8B/2.jpg" /></a></td>
+    </tr>
+    <tr class="td1" valign="top" style={{border : 'none',background : '#fff'}}>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1fS4y1z7Gp?spm_id_from=333.999.0.0" title="DGIoT开源物联网平台——腾讯云服务器购买">DGIoT开源物联网平台——腾讯云服务器购买</a></td>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV18b4y1x77E?spm_id_from=333.999.0.0" title="DGIoT开源物联网平台——服务器部署">DGIoT开源物联网平台——服务器部署</a></td>
+     </tr>
+</table>
+
+## 实战教程
+
+<table style={{border : 'none'}}>
+    <tr style={{border : 'none'}}>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1GP4y1M7ot?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E5%AE%9E%E6%88%98%E6%95%99%E7%A8%8B/1.jpg" /></a></td>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1MV4y1p7Yn?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E5%AE%9E%E6%88%98%E6%95%99%E7%A8%8B/2.jpg" /></a></td>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1XF411473H?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E5%AE%9E%E6%88%98%E6%95%99%E7%A8%8B/3.jpg" /></a></td>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1fG41157CS?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E5%AE%9E%E6%88%98%E6%95%99%E7%A8%8B/4.jpg" /></a></td>        
+    </tr>
+    <tr class="td1" valign="top" style={{border : 'none',background : '#fff'}}>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV18d4y1R74q?spm_id_from=333.999.0.0" title="MODBUS温湿度平台接入">MODBUS温湿度平台接入</a></td>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV18d4y1R74q?spm_id_from=333.999.0.0" title="modbus虚拟设备平台接入">modbus虚拟设备平台接入</a></td>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV18d4y1R74q?spm_id_from=333.999.0.0" title="DGIoT实物电表连接">DGIoT实物电表连接</a></td>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV18d4y1R74q?spm_id_from=333.999.0.0" title="虚拟电表连接">虚拟电表连接</a></td>
+     </tr>
+    <tr style={{border : 'none'}}>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1EU4y1z7wF?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E5%AE%9E%E6%88%98%E6%95%99%E7%A8%8B/5.jpg" /></a></td>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1334y1b7qc?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E5%AE%9E%E6%88%98%E6%95%99%E7%A8%8B/6.jpg" /></a></td>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1pF411t7bq?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E5%AE%9E%E6%88%98%E6%95%99%E7%A8%8B/3.jpg" /></a></td>        
+    </tr>
+    <tr class="td1" valign="top" style={{border : 'none',background : '#fff'}}>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV18d4y1R74q?spm_id_from=333.999.0.0" title="mqtt虚拟设备连接">mqtt虚拟设备连接</a></td>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV18d4y1R74q?spm_id_from=333.999.0.0" title="opc虚拟设备连接">opc虚拟设备连接</a></td>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV18d4y1R74q?spm_id_from=333.999.0.0" title="dgiot低代码远程控制电表-拉合闸视频演练">dgiot低代码远程控制电表-拉合闸视频演练</a></td>      
+    </tr>     
+</table>
+
+## 开发教程
+<table style={{border : 'none'}}>
+    <tr style={{border : 'none'}}>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV15u411z73i?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E5%BC%80%E5%8F%91%E6%95%99%E7%A8%8B/1.jpg" /></a></td>
+    </tr>
+    <tr class="td1" valign="top" style={{border : 'none',background : '#fff'}}>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV15u411z73i?spm_id_from=333.999.0.0" title="dgiot api编写教程">dgiot api编写教程</a></td>
+     </tr>
+</table>
+
+
+## 智慧校园传感接入教程
+<table style={{border : 'none'}}>
+    <tr style={{border : 'none'}}>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1Zd4y1Q7Kf?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E6%99%BA%E6%85%A7%E6%A0%A1%E5%9B%AD%E4%BC%A0%E6%84%9F%E6%8E%A5%E5%85%A5%E6%95%99%E7%A8%8B/1.jpg" /></a></td>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1xe4y1h7Dk?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E6%99%BA%E6%85%A7%E6%A0%A1%E5%9B%AD%E4%BC%A0%E6%84%9F%E6%8E%A5%E5%85%A5%E6%95%99%E7%A8%8B/2.jpg" /></a></td>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1C14y1s75L?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E6%99%BA%E6%85%A7%E6%A0%A1%E5%9B%AD%E4%BC%A0%E6%84%9F%E6%8E%A5%E5%85%A5%E6%95%99%E7%A8%8B/3.jpg" /></a></td>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1nW4y1z7Nw?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E6%99%BA%E6%85%A7%E6%A0%A1%E5%9B%AD%E4%BC%A0%E6%84%9F%E6%8E%A5%E5%85%A5%E6%95%99%E7%A8%8B/4.jpg" /></a></td>
+    </tr>
+    <tr class="td1" valign="top" style={{border : 'none',background : '#fff'}}>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1Zd4y1Q7Kf?spm_id_from=333.999.0.0" title="DGIOT平台接入红外传感器教程">DGIOT平台接入红外传感器教程</a></td>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1xe4y1h7Dk?spm_id_from=333.999.0.0" title="DGIOT平台接入甲烷传感器教程">DGIOT平台接入甲烷传感器教程</a></td>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1C14y1s75L?spm_id_from=333.999.0.0" title="DGIOT平台接入水位传感器教程">DGIOT平台接入水位传感器教程</a></td>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1nW4y1z7Nw?spm_id_from=333.999.0.0" title="DGIOT平台接入烟感传感器教程">DGIOT平台接入烟感传感器教程</a></td>
+     </tr>
+    <tr style={{border : 'none'}}>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1C34y1H7rR?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E6%99%BA%E6%85%A7%E6%A0%A1%E5%9B%AD%E4%BC%A0%E6%84%9F%E6%8E%A5%E5%85%A5%E6%95%99%E7%A8%8B/5.jpg" /></a></td>
+        <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV12f4y1o7d3?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E6%99%BA%E6%85%A7%E6%A0%A1%E5%9B%AD%E4%BC%A0%E6%84%9F%E6%8E%A5%E5%85%A5%E6%95%99%E7%A8%8B/6.jpg" /></a></td>       
+    </tr>
+    <tr class="td1" valign="top" style={{border : 'none',background : '#fff'}}>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV1C34y1H7rR?spm_id_from=333.999.0.0" title="DGIOT平台接入噪声传感器教程">DGIOT平台接入噪声传感器教程</a></td>
+        <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV12f4y1o7d3?spm_id_from=333.999.0.0" title="DGIOT平台接入振动传感器教程">DGIOT平台接入振动传感器教程</a></td>      
+    </tr>     
+</table>
+
+## 案例视频
+<table style={{border : 'none'}}>
+    <tr style={{border : 'none'}}>
+            <td style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV18d4y1R74q?spm_id_from=333.999.0.0"><img width="216px" src="http://dgiot-1253666439.cos.ap-shanghai-fsi.myqcloud.com/dgiot_doc/doc%E8%A7%86%E9%A2%91%E5%9B%BE%E7%89%87/%E6%A1%88%E4%BE%8B%E8%A7%86%E9%A2%91/1.jpg" /></a></td>
+    </tr>
+    <tr class="td1" valign="top" style={{border : 'none',background : '#fff'}}>
+            <td class="a1" style={{border : 'none'}}> <a href="https://www.bilibili.com/video/BV18d4y1R74q?spm_id_from=333.999.0.0" title="海量用电信息采集项目性能测试">海量用电信息采集项目性能测试</a></td>
+    </tr>
+</table>
+
+## Preview address
+[Tencent Cloud preview address](https://dgiotdashboard-8gb17b3673ff6cdd-1253666439.ap-shanghai.app.tcloudbase.com?ftom=git)
+
+
+## Open source license
+Apache License 2.0, 详见 [LICENSE](./LICENSE)。

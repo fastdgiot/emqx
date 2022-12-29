@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2018-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2018-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -30,8 +30,6 @@
 -compile(nowarn_export_all).
 -endif.
 
--elvis([{elvis_style, invalid_dynamic_call, #{ignore => [emqx_connection]}}]).
-
 %% API
 -export([ start_link/3
         , stop/1
@@ -41,8 +39,14 @@
         , stats/1
         ]).
 
+-export([ async_set_keepalive/3
+        , async_set_keepalive/4
+        , async_set_socket_options/2
+        ]).
+
 -export([ call/2
         , call/3
+        , cast/2
         ]).
 
 %% Callback
@@ -56,7 +60,7 @@
         ]).
 
 %% Internal callback
--export([wakeup_from_hib/2, recvloop/2]).
+-export([wakeup_from_hib/2, recvloop/2, get_state/1]).
 
 %% Export for CT
 -export([set_field/3]).
@@ -102,9 +106,6 @@
 -type(state() :: #state{}).
 
 -define(ACTIVE_N, 100).
--define(INFO_KEYS, [socktype, peername, sockname, sockstate, active_n]).
--define(CONN_STATS, [recv_pkt, recv_msg, send_pkt, send_msg]).
--define(SOCK_STATS, [recv_oct, recv_cnt, send_oct, send_cnt, send_pend]).
 
 -define(ENABLED(X), (X =/= undefined)).
 
@@ -113,20 +114,50 @@
             [emqx_channel:info(clientid, Channel),
              emqx_channel:info(username, Channel)]))).
 
--define(ALARM_CONN_INFO_KEYS, [
-    socktype, sockname, peername,
-    clientid, username, proto_name, proto_ver, connected_at
-]).
--define(ALARM_SOCK_STATS_KEYS, [send_pend, recv_cnt, recv_oct, send_cnt, send_oct]).
--define(ALARM_SOCK_OPTS_KEYS, [high_watermark, high_msgq_watermark, sndbuf, recbuf, buffer]).
+-define(INFO_KEYS,
+    [ socktype
+    , peername
+    , sockname
+    , sockstate
+    , active_n
+    ]).
+
+-define(SOCK_STATS,
+    [ recv_oct
+    , recv_cnt
+    , send_oct
+    , send_cnt
+    , send_pend
+    ]).
+
+-define(ALARM_CONN_INFO_KEYS,
+    [ socktype
+    , sockname
+    , peername
+    , clientid
+    , username
+    , proto_name
+    , proto_ver
+    , connected_at
+    ]).
+
+-define(ALARM_SOCK_STATS_KEYS,
+    [ send_pend
+    , recv_cnt
+    , recv_oct
+    , send_cnt
+    , send_oct
+    ]).
+
+-define(ALARM_SOCK_OPTS_KEYS,
+    [ high_watermark
+    , high_msgq_watermark
+    , sndbuf
+    , recbuf
+    , buffer
+    ]).
 
 -dialyzer({no_match, [info/2]}).
--dialyzer({nowarn_function, [ init/4
-                            , init_state/3
-                            , run_loop/2
-                            , system_terminate/4
-                            , system_code_change/4
-                            ]}).
 
 -spec(start_link(esockd:transport(), esockd:socket(), proplists:proplist())
       -> {ok, pid()}).
@@ -140,7 +171,7 @@ start_link(Transport, Socket, Options) ->
 %%--------------------------------------------------------------------
 
 %% @doc Get infos of the connection/channel.
--spec(info(pid()|state()) -> emqx_types:infos()).
+-spec(info(pid() | state()) -> emqx_types:infos()).
 info(CPid) when is_pid(CPid) ->
     call(CPid, info);
 info(State = #state{channel = Channel}) ->
@@ -169,7 +200,7 @@ info(limiter, #state{limiter = Limiter}) ->
     maybe_apply(fun emqx_limiter:info/1, Limiter).
 
 %% @doc Get stats of the connection/channel.
--spec(stats(pid()|state()) -> emqx_types:stats()).
+-spec(stats(pid() | state()) -> emqx_types:stats()).
 stats(CPid) when is_pid(CPid) ->
     call(CPid, stats);
 stats(#state{transport = Transport,
@@ -179,10 +210,41 @@ stats(#state{transport = Transport,
                     {ok, Ss}   -> Ss;
                     {error, _} -> []
                 end,
-    ConnStats = emqx_pd:get_counters(?CONN_STATS),
     ChanStats = emqx_channel:stats(Channel),
     ProcStats = emqx_misc:proc_stats(),
-    lists:append([SockStats, ConnStats, ChanStats, ProcStats]).
+    lists:append([SockStats, ChanStats, ProcStats]).
+
+%% @doc Set TCP keepalive socket options to override system defaults.
+%% Idle: The number of seconds a connection needs to be idle before
+%%       TCP begins sending out keep-alive probes (Linux default 7200).
+%% Interval: The number of seconds between TCP keep-alive probes
+%%           (Linux default 75).
+%% Probes: The maximum number of TCP keep-alive probes to send before
+%%         giving up and killing the connection if no response is
+%%         obtained from the other end (Linux default 9).
+%%
+%% NOTE: This API sets TCP socket options, which has nothing to do with
+%%       the MQTT layer's keepalive (PINGREQ and PINGRESP).
+async_set_keepalive(Idle, Interval, Probes) ->
+    async_set_keepalive(self(), Idle, Interval, Probes).
+
+async_set_keepalive(Pid, Idle, Interval, Probes) ->
+    Options = [ {keepalive, true}
+              , {raw, 6, 4, <<Idle:32/native>>}
+              , {raw, 6, 5, <<Interval:32/native>>}
+              , {raw, 6, 6, <<Probes:32/native>>}
+              ],
+    async_set_socket_options(Pid, Options).
+
+%% @doc Set custom socket options.
+%% This API is made async because the call might be originated from
+%% a hookpoint callback (otherwise deadlock).
+%% If failed to set, the error message is logged.
+async_set_socket_options(Pid, Options) ->
+    cast(Pid, {async_set_socket_options, Options}).
+
+cast(Pid, Req) ->
+    gen_server:cast(Pid, Req).
 
 call(Pid, Req) ->
     call(Pid, Req, infinity).
@@ -250,8 +312,8 @@ run_loop(Parent, State = #state{transport = Transport,
                                 peername  = Peername,
                                 channel   = Channel}) ->
     emqx_logger:set_metadata_peername(esockd:format(Peername)),
-    emqx_misc:tune_heap_size(emqx_zone:oom_policy(
-                               emqx_channel:info(zone, Channel))),
+    _ = emqx_misc:tune_heap_size(emqx_zone:oom_policy(
+                                   emqx_channel:info(zone, Channel))),
     case activate_socket(State) of
         {ok, NState} -> hibernate(Parent, NState);
         {error, Reason} ->
@@ -311,6 +373,7 @@ ensure_stats_timer(_Timeout, State) -> State.
 
 -compile({inline, [cancel_stats_timer/1]}).
 cancel_stats_timer(State = #state{stats_timer = TRef}) when is_reference(TRef) ->
+    ?tp(debug, cancel_stats_timer, #{}),
     ok = emqx_misc:cancel_timer(TRef),
     State#state{stats_timer = undefined};
 cancel_stats_timer(State) -> State.
@@ -320,7 +383,7 @@ cancel_stats_timer(State) -> State.
 
 process_msg([], State) ->
     {ok, State};
-process_msg([Msg|More], State) ->
+process_msg([Msg | More], State) ->
     try
         case handle_msg(Msg, State) of
             ok ->
@@ -366,6 +429,9 @@ handle_msg({'$gen_call', From, Req}, State) ->
             gen_server:reply(From, Reply),
             stop(Reason, NState)
     end;
+handle_msg({'$gen_cast', Req}, State) ->
+    NewState = handle_cast(Req, State),
+    {ok, NewState};
 
 handle_msg({Inet, _Sock, Data}, State) when Inet == tcp; Inet == ssl ->
     ?LOG(debug, "RECV ~0p", [Data]),
@@ -411,7 +477,7 @@ handle_msg({Passive, _Sock}, State)
 
 handle_msg(Deliver = {deliver, _Topic, _Msg},
            #state{active_n = ActiveN} = State) ->
-    Delivers = [Deliver|emqx_misc:drain_deliver(ActiveN)],
+    Delivers = [Deliver | emqx_misc:drain_deliver(ActiveN)],
     with_channel(handle_deliver, [Delivers], State);
 
 %% Something sent
@@ -475,8 +541,8 @@ terminate(Reason, State = #state{channel = Channel, transport = Transport,
         E : C : S ->
             ?tp(warning, unclean_terminate, #{exception => E, context => C, stacktrace => S})
     end,
-    ?tp(debug, terminate, #{}),
-    maybe_raise_excption(Reason).
+    ?tp(info, terminate, #{reason => Reason}),
+    maybe_raise_exception(Reason).
 
 %% close socket, discard new state, always return ok.
 close_socket_ok(State) ->
@@ -484,12 +550,12 @@ close_socket_ok(State) ->
     ok.
 
 %% tell truth about the original exception
-maybe_raise_excption(#{exception := Exception,
+maybe_raise_exception(#{exception := Exception,
                        context := Context,
                        stacktrace := Stacktrace
                       }) ->
     erlang:raise(Exception, Context, Stacktrace);
-maybe_raise_excption(Reason) ->
+maybe_raise_exception(Reason) ->
     exit(Reason).
 
 %%--------------------------------------------------------------------
@@ -585,12 +651,17 @@ parse_incoming(Data, Packets, State = #state{parse_state = ParseState}) ->
             {Packets, State#state{parse_state = NParseState}};
         {ok, Packet, Rest, NParseState} ->
             NState = State#state{parse_state = NParseState},
-            parse_incoming(Rest, [Packet|Packets], NState)
+            parse_incoming(Rest, [Packet | Packets], NState)
     catch
+        error:proxy_protocol_config_disabled:_Stk ->
+            ?LOG(error,
+                 "~nMalformed packet, "
+                 "please check proxy_protocol config for specific listeners and zones~n"),
+            {[{frame_error, proxy_protocol_config_disabled} | Packets], State};
         error:Reason:Stk ->
             ?LOG(error, "~nParse failed for ~0p~n~0p~nFrame data:~0p",
                  [Reason, Stk, Data]),
-            {[{frame_error, Reason}|Packets], State}
+            {[{frame_error, Reason} | Packets], State}
     end.
 
 -compile({inline, [next_incoming_msgs/1]}).
@@ -644,6 +715,7 @@ serialize_and_inc_stats_fun(#state{serialize = Serialize}) ->
                          [emqx_packet:format(Packet)]),
                     ok = emqx_metrics:inc('delivery.dropped.too_large'),
                     ok = emqx_metrics:inc('delivery.dropped'),
+                    ok = inc_outgoing_stats({error, message_too_large}),
                     <<>>;
             Data -> ?LOG(debug, "SEND ~s", [emqx_packet:format(Packet)]),
                     ok = inc_outgoing_stats(Packet),
@@ -660,7 +732,7 @@ send(IoData, #state{transport = Transport, socket = Socket, channel = Channel}) 
     ok = emqx_metrics:inc('bytes.sent', Oct),
     inc_counter(outgoing_bytes, Oct),
     emqx_congestion:maybe_alarm_conn_congestion(Socket, Transport, Channel),
-    case Transport:async_send(Socket, IoData, [nosuspend]) of
+    case Transport:async_send(Socket, IoData, []) of
         ok -> ok;
         Error = {error, _Reason} ->
             %% Send an inet_reply to postpone handling the error
@@ -683,11 +755,30 @@ handle_info(activate_socket, State = #state{sockstate = OldSst}) ->
     end;
 
 handle_info({sock_error, Reason}, State) ->
-    Reason =/= closed andalso ?LOG(error, "Socket error: ~p", [Reason]),
+    case Reason =/= closed andalso Reason =/= einval of
+        true -> ?LOG(warning, "socket_error: ~p", [Reason]);
+        false -> ok
+    end,
     handle_info({sock_closed, Reason}, close_socket(State));
 
 handle_info(Info, State) ->
     with_channel(handle_info, [Info], State).
+
+%%--------------------------------------------------------------------
+%% Handle Info
+
+handle_cast({async_set_socket_options, Opts},
+            State = #state{transport = Transport,
+                           socket    = Socket
+                          }) ->
+    case Transport:setopts(Socket, Opts) of
+        ok -> ?tp(info, "custom_socket_options_successfully", #{opts => Opts});
+        Err -> ?tp(error, "failed_to_set_custom_socket_optionn", #{reason => Err})
+    end,
+    State;
+handle_cast(Req, State) ->
+    ?tp(error, "received_unknown_cast", #{cast => Req}),
+    State.
 
 %%--------------------------------------------------------------------
 %% Ensure rate limit
@@ -698,7 +789,7 @@ ensure_rate_limit(Stats, State = #state{limiter = Limiter}) ->
         {ok, Limiter1} ->
             State#state{limiter = Limiter1};
         {pause, Time, Limiter1} ->
-            ?LOG(warning, "Pause ~pms due to rate limit", [Time]),
+            ?LOG(notice, "Pause ~pms due to rate limit", [Time]),
             TRef = start_timer(Time, limit_timeout),
             State#state{sockstate   = blocked,
                         limiter     = Limiter1,
@@ -762,6 +853,7 @@ inc_incoming_stats(Packet = ?PACKET(Type)) ->
     case Type =:= ?PUBLISH of
         true ->
             inc_counter(recv_msg, 1),
+            inc_qos_stats(recv_msg, Packet),
             inc_counter(incoming_pubs, 1);
         false ->
             ok
@@ -769,17 +861,32 @@ inc_incoming_stats(Packet = ?PACKET(Type)) ->
     emqx_metrics:inc_recv(Packet).
 
 -compile({inline, [inc_outgoing_stats/1]}).
+inc_outgoing_stats({error, message_too_large}) ->
+    inc_counter('send_msg.dropped', 1),
+    inc_counter('send_msg.dropped.too_large', 1);
 inc_outgoing_stats(Packet = ?PACKET(Type)) ->
     inc_counter(send_pkt, 1),
     case Type =:= ?PUBLISH of
         true ->
             inc_counter(send_msg, 1),
-            inc_counter(outgoing_pubs, 1);
+            inc_counter(outgoing_pubs, 1),
+            inc_qos_stats(send_msg, Packet);
         false ->
             ok
     end,
     emqx_metrics:inc_sent(Packet).
 
+inc_qos_stats(Type, #mqtt_packet{header = #mqtt_packet_header{qos = QoS}}) when ?IS_QOS(QoS) ->
+    inc_counter(inc_qos_stats_key(Type, QoS), 1);
+inc_qos_stats(_, _) -> ok.
+
+inc_qos_stats_key(send_msg, ?QOS_0) -> 'send_msg.qos0';
+inc_qos_stats_key(send_msg, ?QOS_1) -> 'send_msg.qos1';
+inc_qos_stats_key(send_msg, ?QOS_2) -> 'send_msg.qos2';
+
+inc_qos_stats_key(recv_msg, ?QOS_0) -> 'recv_msg.qos0';
+inc_qos_stats_key(recv_msg, ?QOS_1) -> 'recv_msg.qos1';
+inc_qos_stats_key(recv_msg, ?QOS_2) -> 'recv_msg.qos2'.
 %%--------------------------------------------------------------------
 %% Helper functions
 
@@ -817,3 +924,7 @@ set_field(Name, Value, State) ->
     Pos = emqx_misc:index_of(Name, record_info(fields, state)),
     setelement(Pos+1, State, Value).
 
+get_state(Pid) ->
+    State = sys:get_state(Pid),
+    maps:from_list(lists:zip(record_info(fields, state),
+                             tl(tuple_to_list(State)))).

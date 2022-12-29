@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2017-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2017-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -19,9 +19,15 @@
 -behaviour(application).
 
 -export([ start/2
+        , prep_stop/1
         , stop/1
         , get_description/0
         , get_release/0
+        ]).
+
+%% internal exports for ad-hoc debugging.
+-export([ set_alias_enrichment_module/0
+        , set_special_auth_module/0
         ]).
 
 -define(APP, emqx).
@@ -41,20 +47,26 @@ start(_Type, _Args) ->
     ekka:start(),
     {ok, Sup} = emqx_sup:start_link(),
     ok = start_autocluster(),
+    %% We need to make sure that emqx's listeners start before plugins
+    %% and modules. Since if the emqx-conf module/plugin is enabled, it will
+    %% try to start or update the listeners with the latest configuration
+    emqx_boot:is_enabled(listeners) andalso (ok = emqx_listeners:start()),
     ok = emqx_plugins:init(),
     _ = emqx_plugins:load(),
     _ = start_ce_modules(),
-    emqx_boot:is_enabled(listeners) andalso (ok = emqx_listeners:start()),
+    set_alias_enrichment_module(),
+    _ = set_special_auth_module(),
     register(emqx, self()),
-    ok = emqx_alarm_handler:load(),
     print_vsn(),
     {ok, Sup}.
 
--spec(stop(State :: term()) -> term()).
-stop(_State) ->
+prep_stop(_State) ->
     ok = emqx_alarm_handler:unload(),
     emqx_boot:is_enabled(listeners)
       andalso emqx_listeners:stop().
+
+stop(_State) ->
+    ok.
 
 set_backtrace_depth() ->
     Depth = application:get_env(?APP, backtrace_depth, 16),
@@ -72,6 +84,42 @@ load_ce_modules() ->
 start_ce_modules() ->
     ok.
 -endif.
+
+set_alias_enrichment_module() ->
+    case emqx:get_env(alias_enrichment_module) of
+        undefined ->
+            ok;
+        Mod ->
+            case erlang:function_exported(Mod, enrich_with_aliases, 2) of
+                true ->
+                    persistent_term:put(alias_enrichment_module, Mod);
+                false ->
+                    ok
+            end
+    end.
+
+set_special_auth_module() ->
+    case emqx:get_env(special_auth_module) of
+        undefined ->
+            ok;
+        Mod ->
+            case erlang:function_exported(Mod, check_authn, 2) of
+                true ->
+                    Priority = authn_module_priority(Mod),
+                    persistent_term:put(special_auth_module, Mod),
+                    emqx:hook('client.authenticate', fun Mod:check_authn/2, Priority);
+                false ->
+                    ok
+            end
+    end.
+
+authn_module_priority(Mod) ->
+    try
+        Mod:authn_priority()
+    catch
+        _:_ ->
+            10_000
+    end.
 
 %%--------------------------------------------------------------------
 %% Print Banner
@@ -115,10 +163,13 @@ get_release() ->
     case lists:keyfind(emqx_vsn, 1, ?MODULE:module_info(compile)) of
         false ->    %% For TEST build or depedency build.
             release_in_macro();
-        {_, Vsn} -> %% For emqx release build
-            VsnStr = release_in_macro(),
-            1 = string:str(Vsn, VsnStr), %% assert
-            Vsn
+        {_, VsnCompile} -> %% For emqx release build
+            VsnMacro = release_in_macro(),
+            case string:str(VsnCompile, VsnMacro) of
+                1 -> ok;
+                _ -> error({version_not_match, VsnCompile, VsnMacro})
+            end,
+            VsnCompile
     end.
 
 release_in_macro() ->

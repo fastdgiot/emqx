@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2017-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2017-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -41,10 +41,10 @@ call(Key, Node, Mod, Fun, Args) ->
     filter_result(?RPC:call(rpc_node({Key, Node}), Mod, Fun, Args)).
 
 multicall(Nodes, Mod, Fun, Args) ->
-    filter_result(?RPC:multicall(rpc_nodes(Nodes), Mod, Fun, Args)).
+    ?RPC:multicall(rpc_nodes(Nodes), Mod, Fun, Args).
 
 multicall(Key, Nodes, Mod, Fun, Args) ->
-    filter_result(?RPC:multicall(rpc_nodes([{Key, Node} || Node <- Nodes]), Mod, Fun, Args)).
+    ?RPC:multicall(rpc_nodes([{Key, Node} || Node <- Nodes]), Mod, Fun, Args).
 
 cast(Node, Mod, Fun, Args) ->
     filter_result(?RPC:cast(rpc_node(Node), Mod, Fun, Args)).

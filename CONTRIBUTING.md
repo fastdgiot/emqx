@@ -19,6 +19,8 @@ Each commit message consists of a **header**, a **body** and a **footer**. The h
 <footer>
 ```
 
+
+
 The **header** with **type** is mandatory. The **scope** of the header is optional. This repository has no predefined scopes. A custom scope can be used for clarity if desired.
 
 Any line of the commit message cannot be longer 100 characters! This allows the message to be easier to read on GitHub as well as in various git tools.
@@ -58,6 +60,20 @@ Must be one of the following:
 - **build**: Changes that affect the CI/CD pipeline or build system or external dependencies (example scopes: travis, jenkins, makefile)
 - **ci**: Changes provided by DevOps for CI purposes.
 - **revert**: Reverts a previous commit.
+
++ commit 常用 type
++ type	含义
++ feat	新功能
++ fix	修复 bug
++ docs	修改文档
++ style	代码格式修改
++ refactor	重构（即不是新增功能，也不是修复 bug）
++ perf	更改代码以提高性能
++ test	增加测试
++ build	构建过程或辅助工具的变动
++ ci	修改项目持续集成流程
++ chore	其他类型的提交
++ revert	恢复上一次提交
 
 ### Scope
 

@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -97,10 +97,10 @@ do_parse(URI) ->
 %% NOTE: assuming the input Headers list is a proplists,
 %% that is, when a key is duplicated, list header overrides tail
 %% e.g. [{"Content_Type", "applicaiton/binary"}, {"content-type", "applicaiton/json"}]
-%% results in: [{"content-type", "applicaiton/binary"}]
+%% results in: [{<<"content-type">>, "applicaiton/binary"}]
 normalise_headers(Headers0) ->
     F = fun({K0, V}) ->
-                K = re:replace(K0, "_", "-", [{return,list}]),
+                K = re:replace(K0, "_", "-", [{return,binary}]),
                 {string:lowercase(K), V}
         end,
     Headers = lists:map(F, Headers0),
@@ -108,11 +108,7 @@ normalise_headers(Headers0) ->
     [{K, proplists:get_value(K, Headers)} || K <- Keys].
 
 normalise_parse_result(#{host := Host, scheme := Scheme0} = Map) ->
-    Scheme = atom_scheme(Scheme0),
-    DefaultPort = case https =:= Scheme of
-                      true  -> 443;
-                      false -> 80
-                  end,
+    {Scheme, DefaultPort} = atom_scheme_and_default_port(Scheme0),
     Port = case maps:get(port, Map, undefined) of
                N when is_number(N) -> N;
                _ -> DefaultPort
@@ -122,11 +118,14 @@ normalise_parse_result(#{host := Host, scheme := Scheme0} = Map) ->
         , port => Port
         }.
 
-%% NOTE: so far we only support http schemes.
-atom_scheme(Scheme) when is_list(Scheme) -> atom_scheme(list_to_binary(Scheme));
-atom_scheme(<<"https">>) -> https;
-atom_scheme(<<"http">>) -> http;
-atom_scheme(Other) -> throw({unsupported_scheme, Other}).
+%% NOTE: so far we only support http/coap schemes.
+atom_scheme_and_default_port(Scheme) when is_list(Scheme) ->
+    atom_scheme_and_default_port(list_to_binary(Scheme));
+atom_scheme_and_default_port(<<"http">> ) -> {http,   80};
+atom_scheme_and_default_port(<<"https">>) -> {https, 443};
+atom_scheme_and_default_port(<<"coap">> ) -> {coap,  5683};
+atom_scheme_and_default_port(<<"coaps">>) -> {coaps, 5684};
+atom_scheme_and_default_port(Other) -> throw({unsupported_scheme, Other}).
 
 do_uri_encode(Char) ->
     case reserved(Char) of

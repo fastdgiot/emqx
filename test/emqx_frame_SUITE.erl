@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2018-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2018-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -43,7 +43,10 @@ groups() ->
     [{parse, [parallel],
       [t_parse_cont,
        t_parse_frame_too_large,
-       t_parse_frame_malformed_variable_byte_integer
+       t_parse_frame_malformed_variable_byte_integer,
+       t_parse_frame_variable_byte_integer,
+       t_parse_malformed_utf8_string,
+       t_parse_frame_proxy_protocol %% proxy_protocol_config_disabled packet.
       ]},
      {connect, [parallel],
       [t_serialize_parse_v3_connect,
@@ -58,7 +61,8 @@ groups() ->
        t_serialize_parse_connack_v5
       ]},
      {publish, [parallel],
-      [t_serialize_parse_qos0_publish,
+      [t_parse_sticky_frames,
+       t_serialize_parse_qos0_publish,
        t_serialize_parse_qos1_publish,
        t_serialize_parse_qos2_publish,
        t_serialize_parse_publish_v5
@@ -135,6 +139,35 @@ t_parse_frame_malformed_variable_byte_integer(_) ->
     ParseState = emqx_frame:initial_parse_state(#{}),
     ?catch_error(malformed_variable_byte_integer,
         emqx_frame:parse(MalformedPayload, ParseState)).
+
+t_parse_frame_variable_byte_integer(_) ->
+    Bin = <<2#10010011, 2#10000000, 2#10001000, 2#10011001, 2#10101101, 2#00110010>>,
+    ?catch_error(malformed_variable_byte_integer,
+        emqx_frame:parse_variable_byte_integer(Bin)).
+
+t_parse_malformed_utf8_string(_) ->
+    MalformedPacket = <<16,31,0,4,
+                        %% Specification name, should be "MQTT"
+                        %% 77,81,84,84,
+                        %% malformed 1-Byte UTF-8 in (U+0000 .. U+001F] && [U+007F])
+                        16#00,16#01,16#1F,16#7F,
+
+                        4,194,0,60,
+                        0,4,101,109,
+                        113,120,0,5,
+                        97,100,109,105,
+                        110,0,6,112,
+                        117,98,108,105,
+                        99>>,
+    ParseState = emqx_frame:initial_parse_state(#{strict_mode => true}),
+    ?catch_error(utf8_string_invalid, emqx_frame:parse(MalformedPacket, ParseState)).
+
+t_parse_frame_proxy_protocol(_) ->
+    BinList = [ <<"PROXY TCP4 ">>, <<"PROXY TCP6 ">>, <<"PROXY UNKNOWN">>
+              , <<"\r\n\r\n\0\r\nQUIT\n">>],
+    [?assertError( proxy_protocol_config_disabled
+                 , emqx_frame:parse(Bin))
+     || Bin <- BinList].
 
 t_serialize_parse_v3_connect(_) ->
     Bin = <<16,37,0,6,77,81,73,115,100,112,3,2,0,60,0,23,109,111,115,
@@ -285,6 +318,24 @@ t_serialize_parse_connack_v5(_) ->
              },
     Packet = ?CONNACK_PACKET(?RC_SUCCESS, 0, Props),
     ?assertEqual(Packet, parse_serialize(Packet, #{version => ?MQTT_PROTO_V5})).
+
+t_parse_sticky_frames(_) ->
+    Payload = lists:duplicate(10, 0),
+    P = #mqtt_packet{header = #mqtt_packet_header{type   = ?PUBLISH,
+                                                  dup    = false,
+                                                  qos    = ?QOS_0,
+                                                  retain = false},
+                     variable = #mqtt_packet_publish{topic_name = <<"a/b">>,
+                                                     packet_id  = undefined},
+                     payload  = iolist_to_binary(Payload)
+                    },
+    Bin = serialize_to_binary(P),
+    Size = size(Bin),
+    <<H:(Size-2)/binary, TailTwoBytes/binary>> = Bin,
+    {more, PState1} = emqx_frame:parse(H), %% needs 2 more bytes
+    %% feed 3 bytes as if the next 1 byte belongs to the next packet.
+    {ok, _, <<42>>, PState2} = emqx_frame:parse(iolist_to_binary([TailTwoBytes, 42]), PState1),
+    ?assertMatch({none, _}, PState2).
 
 t_serialize_parse_qos0_publish(_) ->
     Bin = <<48,14,0,7,120,120,120,47,121,121,121,104,101,108,108,111>>,
@@ -531,4 +582,3 @@ parse_to_packet(Bin, Opts) ->
     Packet.
 
 payload(Len) -> iolist_to_binary(lists:duplicate(Len, 1)).
-

@@ -2,9 +2,16 @@
 test-data/
 deps
 !deps/.placeholder
+_build/
+www/
 *.o
+*.beam
 *.plt
+*.iml
+*.iws
+/__pycache__
 erl_crash.dump
+ebin
 !ebin/.placeholder
 .concrete/DEV_MODE
 .rebar
@@ -19,6 +26,7 @@ eunit.coverdata
 test/ct.cover.spec
 ct.coverdata
 .idea/
+_build
 .rebar3
 rebar3.crashdump
 .DS_Store
@@ -44,3 +52,19 @@ dist.zip
 scripts/git-token
 etc/*.seg
 _upgrade_base/
+node_modules/
+package-lock.json
+erlang_ls.config
+.els_cache/
+# VSCode files
+.vs/
+.vscode/
+# Emacs Backup files
+*~
+# Emacs temporary files
+.#*
+*#
+# For direnv
+.envrc
+mix.lock
+.gitconfig.tmp

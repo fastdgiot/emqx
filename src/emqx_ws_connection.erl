@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2018-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2018-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -93,14 +93,25 @@
 -type(ws_cmd() :: {active, boolean()}|close).
 
 -define(ACTIVE_N, 100).
--define(INFO_KEYS, [socktype, peername, sockname, sockstate, active_n]).
--define(SOCK_STATS, [recv_oct, recv_cnt, send_oct, send_cnt]).
--define(CONN_STATS, [recv_pkt, recv_msg, send_pkt, send_msg]).
+
+-define(INFO_KEYS,
+    [ socktype
+    , peername
+    , sockname
+    , sockstate
+    , active_n
+    ]).
+
+-define(SOCK_STATS,
+    [ recv_oct
+    , recv_cnt
+    , send_oct
+    , send_cnt
+    ]).
 
 -define(ENABLED(X), (X =/= undefined)).
 
 -dialyzer({no_match, [info/2]}).
--dialyzer({nowarn_function, [websocket_init/1]}).
 
 %%--------------------------------------------------------------------
 %% Info, Stats
@@ -146,10 +157,9 @@ stats(WsPid) when is_pid(WsPid) ->
     call(WsPid, stats);
 stats(#state{channel = Channel}) ->
     SockStats = emqx_pd:get_counters(?SOCK_STATS),
-    ConnStats = emqx_pd:get_counters(?CONN_STATS),
     ChanStats = emqx_channel:stats(Channel),
     ProcStats = emqx_misc:proc_stats(),
-    lists:append([SockStats, ConnStats, ChanStats, ProcStats]).
+    lists:append([SockStats, ChanStats, ProcStats]).
 
 %% kick|discard|takeover
 -spec(call(pid(), Req :: term()) -> Reply :: term()).
@@ -242,7 +252,7 @@ parse_header_fun_origin(Req, Opts) ->
             Origins = proplists:get_value(check_origins, Opts, []),
             case lists:member(Value, Origins) of
                 true -> ok;
-                false -> {origin_not_allowed, Value}
+                false -> {error, {origin_not_allowed, Value}}
             end
     end.
 
@@ -257,13 +267,16 @@ websocket_init([Req, Opts]) ->
         case proplists:get_bool(proxy_protocol, Opts)
         andalso maps:get(proxy_header, Req) of
             #{src_address := SrcAddr, src_port := SrcPort, ssl := SSL} ->
-                ProxyName = {SrcAddr, SrcPort},
+                SourceName = {SrcAddr, SrcPort},
                 %% Notice: Only CN is available in Proxy Protocol V2 additional info
-                ProxySSL = case maps:get(cn, SSL, undefined) of
+                SourceSSL = case maps:get(cn, SSL, undefined) of
                              undeined -> nossl;
                              CN -> [{pp2_ssl_cn, CN}]
                            end,
-                {ProxyName, ProxySSL};
+                {SourceName, SourceSSL};
+            #{src_address := SrcAddr, src_port := SrcPort} ->
+                SourceName = {SrcAddr, SrcPort},
+                {SourceName , nossl};
             _ ->
                 {get_peer(Req, Opts), cowboy_req:cert(Req)}
         end,
@@ -301,7 +314,7 @@ websocket_init([Req, Opts]) ->
     %% MQTT Idle Timeout
     IdleTimeout = emqx_zone:idle_timeout(Zone),
     IdleTimer = start_timer(IdleTimeout, idle_timeout),
-    emqx_misc:tune_heap_size(emqx_zone:oom_policy(Zone)),
+    _ = emqx_misc:tune_heap_size(emqx_zone:oom_policy(Zone)),
     emqx_logger:set_metadata_peername(esockd:format(Peername)),
     {ok, #state{peername       = Peername,
                 sockname       = Sockname,
@@ -400,7 +413,10 @@ websocket_close(Reason, State) ->
 
 terminate(Reason, _Req, #state{channel = Channel}) ->
     ?LOG(debug, "Terminated due to ~p", [Reason]),
-    emqx_channel:terminate(Reason, Channel).
+    emqx_channel:terminate(Reason, Channel);
+
+terminate(_Reason, _Req, _UnExpectedState) ->
+    ok.
 
 %%--------------------------------------------------------------------
 %% Handle call
@@ -494,7 +510,7 @@ ensure_rate_limit(Stats, State = #state{limiter = Limiter}) ->
         {ok, Limiter1} ->
             State#state{limiter = Limiter1};
         {pause, Time, Limiter1} ->
-            ?LOG(warning, "Pause ~pms due to rate limit", [Time]),
+            ?LOG(notice, "Pause ~pms due to rate limit", [Time]),
             TRef = start_timer(Time, limit_timeout),
             NState = State#state{sockstate   = blocked,
                                  limiter     = Limiter1,
@@ -609,6 +625,7 @@ serialize_and_inc_stats_fun(#state{serialize = Serialize}) ->
                          [emqx_packet:format(Packet)]),
                     ok = emqx_metrics:inc('delivery.dropped.too_large'),
                     ok = emqx_metrics:inc('delivery.dropped'),
+                    ok = inc_outgoing_stats({error, message_too_large}),
                     <<>>;
             Data -> ?LOG(debug, "SEND ~s", [emqx_packet:format(Packet)]),
                     ok = inc_outgoing_stats(Packet),
@@ -635,19 +652,28 @@ inc_recv_stats(Cnt, Oct) ->
 
 inc_incoming_stats(Packet = ?PACKET(Type)) ->
     _ = emqx_pd:inc_counter(recv_pkt, 1),
-    if Type == ?PUBLISH ->
-           inc_counter(recv_msg, 1),
-           inc_counter(incoming_pubs, 1);
-       true -> ok
+    case Type of
+        ?PUBLISH ->
+            inc_counter(recv_msg, 1),
+            inc_qos_stats(recv_msg, Packet),
+            inc_counter(incoming_pubs, 1);
+        _ ->
+            ok
     end,
     emqx_metrics:inc_recv(Packet).
 
+inc_outgoing_stats({error, message_too_large}) ->
+    inc_counter('send_msg.dropped', 1),
+    inc_counter('send_msg.dropped.too_large', 1);
 inc_outgoing_stats(Packet = ?PACKET(Type)) ->
     _ = emqx_pd:inc_counter(send_pkt, 1),
-    if Type == ?PUBLISH ->
-           inc_counter(send_msg, 1),
-           inc_counter(outgoing_pubs, 1);
-       true -> ok
+    case Type of
+        ?PUBLISH ->
+            inc_counter(send_msg, 1),
+            inc_qos_stats(send_msg, Packet),
+            inc_counter(outgoing_pubs, 1);
+        _ ->
+            ok
     end,
     emqx_metrics:inc_sent(Packet).
 
@@ -660,6 +686,20 @@ inc_sent_stats(Cnt, Oct) ->
 inc_counter(Name, Value) ->
     _ = emqx_pd:inc_counter(Name, Value),
     ok.
+
+inc_qos_stats(Type, #mqtt_packet{header = #mqtt_packet_header{qos = QoS}}) when ?IS_QOS(QoS) ->
+    inc_counter(inc_qos_stats_key(Type, QoS), 1);
+inc_qos_stats(_, _) ->
+    ok.
+
+inc_qos_stats_key(send_msg, ?QOS_0) -> 'send_msg.qos0';
+inc_qos_stats_key(send_msg, ?QOS_1) -> 'send_msg.qos1';
+inc_qos_stats_key(send_msg, ?QOS_2) -> 'send_msg.qos2';
+
+inc_qos_stats_key(recv_msg, ?QOS_0) -> 'recv_msg.qos0';
+inc_qos_stats_key(recv_msg, ?QOS_1) -> 'recv_msg.qos1';
+inc_qos_stats_key(recv_msg, ?QOS_2) -> 'recv_msg.qos2'.
+
 %%--------------------------------------------------------------------
 %% Helper functions
 %%--------------------------------------------------------------------
@@ -771,4 +811,3 @@ get_peer(Req, Opts) ->
 set_field(Name, Value, State) ->
     Pos = emqx_misc:index_of(Name, record_info(fields, state)),
     setelement(Pos+1, State, Value).
-

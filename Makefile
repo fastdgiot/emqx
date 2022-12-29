@@ -1,24 +1,34 @@
 $(shell $(CURDIR)/scripts/git-hooks-init.sh)
-REBAR_VERSION = 3.14.3-emqx-7
 REBAR = $(CURDIR)/rebar3
 BUILD = $(CURDIR)/build
 SCRIPTS = $(CURDIR)/scripts
+export EMQX_RELUP ?= true
+export EMQX_DEFAULT_BUILDER = ghcr.io/emqx/emqx-builder/4.4-20:24.3.4.2-1-alpine3.15.1
+export EMQX_DEFAULT_RUNNER = alpine:3.15.1
+export OTP_VSN ?= $(shell $(CURDIR)/scripts/get-otp-vsn.sh)
 export PKG_VSN ?= $(shell $(CURDIR)/pkg-vsn.sh)
-export EMQX_DESC ?= EMQ X
-export EMQX_CE_DASHBOARD_VERSION ?= v4.3.0
+export DOCKERFILE := deploy/docker/Dockerfile
+export DOCKERFILE_TESTING := deploy/docker/Dockerfile.testing
 ifeq ($(OS),Windows_NT)
 	export REBAR_COLOR=none
+	FIND=/usr/bin/find
+else
+	FIND=find
 endif
-ifeq ($(OS),Windows_NT)
-		GET_DASHBOARD=$(SCRIPTS)/get-windashboard.sh
-	else
-	  	GET_DASHBOARD=$(SCRIPTS)/get-dashboard.sh
-	endif
+
+GET_DASHBOARD=$(SCRIPTS)/get-dashboard.sh
 
 PROFILE ?= emqx
 REL_PROFILES := emqx emqx-edge
 PKG_PROFILES := emqx-pkg emqx-edge-pkg
 PROFILES := $(REL_PROFILES) $(PKG_PROFILES) default
+CT_READABLE ?= true
+
+ifeq ($(OS),Windows_NT)
+		QUIKRUN=$(CURDIR)/_build/$(PROFILE)/rel/emqx/bin/emqx.cmd console
+	else
+	  	QUIKRUN=$(CURDIR)/_build/$(PROFILE)/rel/emqx/bin/emqx console
+	endif
 
 export REBAR_GIT_CLONE_OPTIONS += --depth=1
 
@@ -31,7 +41,7 @@ all: $(REBAR) $(PROFILES)
 .PHONY: ensure-rebar3
 ensure-rebar3:
 	@$(SCRIPTS)/fail-on-old-otp-version.escript
-	@$(SCRIPTS)/ensure-rebar3.sh $(REBAR_VERSION)
+	@$(SCRIPTS)/ensure-rebar3.sh
 
 $(REBAR): ensure-rebar3
 
@@ -56,10 +66,18 @@ APPS=$(shell $(CURDIR)/scripts/find-apps.sh)
 ## app/name-ct targets are intended for local tests hence cover is not enabled
 .PHONY: $(APPS:%=%-ct)
 define gen-app-ct-target
-$1-ct:
-	$(REBAR) ct --name 'test@127.0.0.1' -v --suite $(shell $(CURDIR)/scripts/find-suites.sh $1)
+$1-ct: $(REBAR)
+	$(REBAR) ct --name 'test@127.0.0.1' -v --readable $(CT_READABLE) --suite $(shell $(CURDIR)/scripts/find-suites.sh $1)
 endef
 $(foreach app,$(APPS),$(eval $(call gen-app-ct-target,$(app))))
+
+## app/name-ct-pipeline targets are used in pipeline -> make cover data for each app
+.PHONY: $(APPS:%=%-ct-pipeline)
+define gen-app-ct-target-pipeline
+$1-ct-pipeline: $(REBAR)
+	$(REBAR) ct --name 'test@127.0.0.1' -c -v --readable $(CT_READABLE) --cover_export_name $(PROFILE)-$(subst /,-,$1) --suite $(shell $(CURDIR)/scripts/find-suites.sh $1)
+endef
+$(foreach app,$(APPS),$(eval $(call gen-app-ct-target-pipeline,$(app))))
 
 ## apps/name-prop targets
 .PHONY: $(APPS:%=%-prop)
@@ -78,6 +96,7 @@ coveralls: $(REBAR)
 	@ENABLE_COVER_COMPILE=1 $(REBAR) as test coveralls send
 
 .PHONY: $(REL_PROFILES)
+
 $(REL_PROFILES:%=%): $(REBAR) get-dashboard
 	@$(REBAR) as $(@) do compile,release
 
@@ -90,16 +109,21 @@ $(REL_PROFILES:%=%): $(REBAR) get-dashboard
 clean: $(PROFILES:%=clean-%)
 $(PROFILES:%=clean-%):
 	@if [ -d _build/$(@:clean-%=%) ]; then \
+		rm -f rebar.lock; \
 		rm -rf _build/$(@:clean-%=%)/rel; \
-		find _build/$(@:clean-%=%) -name '*.beam' -o -name '*.so' -o -name '*.app' -o -name '*.appup' -o -name '*.o' -o -name '*.d' -type f | xargs rm -f; \
+		$(FIND) _build/$(@:clean-%=%) -name '*.beam' -o -name '*.so' -o -name '*.app' -o -name '*.appup' -o -name '*.o' -o -name '*.d' -type f | xargs rm -f; \
+		$(FIND) _build/$(@:clean-%=%) -type l -delete; \
 	fi
 
 .PHONY: clean-all
 clean-all:
+	@rm -f rebar.lock
 	@rm -rf _build
+	@rm -f rebar.lock
 
 .PHONY: deps-all
 deps-all: $(REBAR) $(PROFILES:%=deps-%)
+	@make clean # ensure clean at the end
 
 ## deps-<profile> is used in CI scripts to download deps and the
 ## share downloads between CI steps and/or copied into containers
@@ -107,10 +131,12 @@ deps-all: $(REBAR) $(PROFILES:%=deps-%)
 .PHONY: $(PROFILES:%=deps-%)
 $(PROFILES:%=deps-%): $(REBAR) get-dashboard
 	@$(REBAR) as $(@:deps-%=%) get-deps
+	@rm -f rebar.lock
 
 .PHONY: xref
-xref: $(REBAR)
+xref: $(REBAR) $(REL_PROFILES:%=%-rel)
 	@$(REBAR) as check xref
+	@scripts/xref-check.escript
 
 .PHONY: dialyzer
 dialyzer: $(REBAR)
@@ -123,10 +149,19 @@ COMMON_DEPS := $(REBAR) get-dashboard $(CONF_SEGS)
 $(REL_PROFILES:%=%-rel) $(PKG_PROFILES:%=%-rel): $(COMMON_DEPS)
 	@$(BUILD) $(subst -rel,,$(@)) rel
 
+## download relup base packages
+.PHONY: $(REL_PROFILES:%=%-relup-downloads)
+define download-relup-packages
+$1-relup-downloads:
+	@if [ "$${EMQX_RELUP}" = "true" ]; then $(CURDIR)/scripts/relup-base-packages.sh $1; fi
+endef
+ALL_ZIPS = $(REL_PROFILES)
+$(foreach zt,$(ALL_ZIPS),$(eval $(call download-relup-packages,$(zt))))
+
 ## relup target is to create relup instructions
 .PHONY: $(REL_PROFILES:%=%-relup)
 define gen-relup-target
-$1-relup: $(COMMON_DEPS)
+$1-relup: $1-relup-downloads $(COMMON_DEPS)
 	@$(BUILD) $1 relup
 endef
 ALL_ZIPS = $(REL_PROFILES)
@@ -149,11 +184,34 @@ $1: $1-rel
 endef
 $(foreach pt,$(PKG_PROFILES),$(eval $(call gen-pkg-target,$(pt))))
 
+## docker target is to create docker instructions
+.PHONY: $(REL_PROFILES:%=%-docker)
+define gen-docker-target
+$1-docker: $(COMMON_DEPS)
+	@$(BUILD) $1 docker
+endef
+ALL_ZIPS = $(REL_PROFILES)
+$(foreach zt,$(ALL_ZIPS),$(eval $(call gen-docker-target,$(zt))))
+
+## emqx-docker-testing
+## emqx-ee-docker-testing
+## is to directly copy a unzipped zip-package to a
+## base image such as ubuntu20.04. Mostly for testing
+.PHONY: $(REL_PROFILES:%=%-docker-testing)
+define gen-docker-target-testing
+$1-docker-testing: $(COMMON_DEPS)
+	@$(BUILD) $1 docker-testing
+endef
+ALL_ZIPS = $(REL_PROFILES)
+$(foreach zt,$(ALL_ZIPS),$(eval $(call gen-docker-target-testing,$(zt))))
+
 .PHONY: run
 run: $(PROFILE) quickrun
 
+.PHONY: ci
+GET_DASHBOARD=$(SCRIPTS)/pre-ci.sh
+ci: $(REBAR) $(PROFILE)
+
 .PHONY: quickrun
 quickrun:
-	./_build/$(PROFILE)/rel/emqx/bin/emqx console
-
-include docker.mk
+	@$(QUIKRUN)
